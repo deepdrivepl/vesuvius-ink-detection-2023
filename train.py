@@ -19,9 +19,7 @@ from torchmetrics import MetricCollection, Dice, Accuracy, JaccardIndex
 from torchmetrics.classification import BinaryFBetaScore
 
 
-
 class VesuvisDataModule(pl.LightningDataModule):
-
     def __init__(self, params, train_transforms, val_transforms):
         super().__init__()
 
@@ -30,7 +28,7 @@ class VesuvisDataModule(pl.LightningDataModule):
         self.val_transform = val_transforms
 
         self.df = pd.read_csv(params["train_data_csv_path"])
-        
+
     def _load_transforms(self, predict: bool = False):
         return [
             monai.transforms.LoadImaged(
@@ -46,24 +44,32 @@ class VesuvisDataModule(pl.LightningDataModule):
         if stage == "fit" or stage is None:
             train_val_df = self.df[self.df.stage == "train"].reset_index(drop=True)
 
-            train_df = train_val_df[train_val_df.fragment_id != int(self.params["val_fragment_id"])].reset_index(
-                drop=True
+            train_df = train_val_df[
+                train_val_df.fragment_id != int(self.params["val_fragment_id"])
+            ].reset_index(drop=True)
+
+            val_df = train_val_df[
+                train_val_df.fragment_id == int(self.params["val_fragment_id"])
+            ].reset_index(drop=True)
+
+            self.train_dataset = self._dataset(
+                train_df, self._load_transforms(), self.train_transform
             )
-
-            val_df = train_val_df[train_val_df.fragment_id == int(self.params["val_fragment_id"])].reset_index(drop=True)
-
-            self.train_dataset = self._dataset(train_df, self._load_transforms(), self.train_transform)
-            self.val_dataset = self._dataset(val_df, self._load_transforms(), self.val_transform)
+            self.val_dataset = self._dataset(
+                val_df, self._load_transforms(), self.val_transform
+            )
 
             print(f"# train: {len(self.train_dataset)}")
             print(f"# val: {len(self.val_dataset)}")
 
-
     def _dataset(self, df, load_transform, transform):
-        return CacheDataset(data=CSVDataset(src=df,
-                                            transform=monai.transforms.Compose(load_transform)),
-                            transform=transform,
-                            cache_rate=1.0, runtime_cache="processes", copy_cache=False)
+        return CacheDataset(
+            data=CSVDataset(src=df, transform=monai.transforms.Compose(load_transform)),
+            transform=transform,
+            cache_rate=1.0,
+            runtime_cache="processes",
+            copy_cache=False,
+        )
 
     def train_dataloader(self):
         return self._dataloader(self.train_dataset, train=True)
@@ -83,8 +89,12 @@ class VesuvisDataModule(pl.LightningDataModule):
 
 
 class VesuvisModule(pl.LightningModule):
-
-    def __init__(self, params, model, loss_function,):
+    def __init__(
+        self,
+        params,
+        model,
+        loss_function,
+    ):
         super().__init__()
 
         self.save_hyperparameters(ignore=["model", "loss_function"])
@@ -100,8 +110,8 @@ class VesuvisModule(pl.LightningModule):
             {
                 "dice": Dice(),
                 "fbeta": BinaryFBetaScore(beta=0.5),
-                "accuracy": Accuracy(task='binary'),
-                "IoU": JaccardIndex(task='binary')
+                "accuracy": Accuracy(task="binary"),
+                "IoU": JaccardIndex(task="binary"),
             }
         )
 
@@ -113,22 +123,28 @@ class VesuvisModule(pl.LightningModule):
         )
 
     def configure_optimizers(self):
-        optimizer = self.params["optimizer"](self.model.parameters(), **self.params["optimizer_params"])
-       
+        optimizer = self.params["optimizer"](
+            self.model.parameters(), **self.params["optimizer_params"]
+        )
+
         if self.params["scheduler"]:
             if self.params["scheduler"].__name__ == "OneCycleLR":
-                scheduler = self.params["scheduler"](optimizer, total_steps=self.trainer.estimated_stepping_batches,
-                                                     **self.params["scheduler_params"])
-                scheduler = {"scheduler": scheduler, "interval" : "step"}
-            
+                scheduler = self.params["scheduler"](
+                    optimizer,
+                    total_steps=self.trainer.estimated_stepping_batches,
+                    **self.params["scheduler_params"],
+                )
+                scheduler = {"scheduler": scheduler, "interval": "step"}
+
             else:
-                scheduler = self.params["scheduler"](optimizer, **self.params["scheduler_params"])
-                
-            optimizer_dict = {'optimizer': optimizer,
-                              'lr_scheduler': scheduler}
+                scheduler = self.params["scheduler"](
+                    optimizer, **self.params["scheduler_params"]
+                )
+
+            optimizer_dict = {"optimizer": optimizer, "lr_scheduler": scheduler}
 
             return optimizer_dict
-        
+
         return optimizer
 
     def forward(self, x):
@@ -182,22 +198,31 @@ def train(params_path, params):
     monai.utils.set_determinism(params.PARAMS["seed"])
     pl.seed_everything(params.PARAMS["seed"], workers=True)
 
-    data_module = VesuvisDataModule(params.PARAMS,
-                                    params.get_train_transforms(),
-                                    params.get_val_transforms())
+    data_module = VesuvisDataModule(
+        params.PARAMS, params.get_train_transforms(), params.get_val_transforms()
+    )
 
     module = VesuvisModule(params.PARAMS, params.model, params.loss_function)
 
-    tb_logger = TensorBoardLogger(save_dir='./logs', name=params.PARAMS["exp_name"], default_hp_metric=False)
+    tb_logger = TensorBoardLogger(
+        save_dir="./logs", name=params.PARAMS["exp_name"], default_hp_metric=False
+    )
 
-    model_checkpoint_dir = os.path.join('./logs', params.PARAMS["exp_name"], 'version_' + str(tb_logger.version), 'models')
-    checkpoint_callback = ModelCheckpoint(verbose=True,
-                                          save_top_k=3,
-                                          monitor=params.PARAMS["ckpt_monitor"],
-                                          mode='max',
-                                          dirpath=model_checkpoint_dir,
-                                          filename='epoch={epoch:02d}-{step}-dice={val/dice:.5f}',
-                                          auto_insert_metric_name=False)
+    model_checkpoint_dir = os.path.join(
+        "./logs",
+        params.PARAMS["exp_name"],
+        "version_" + str(tb_logger.version),
+        "models",
+    )
+    checkpoint_callback = ModelCheckpoint(
+        verbose=True,
+        save_top_k=3,
+        monitor=params.PARAMS["ckpt_monitor"],
+        mode="max",
+        dirpath=model_checkpoint_dir,
+        filename="epoch={epoch:02d}-{step}-dice={val/dice:.5f}",
+        auto_insert_metric_name=False,
+    )
 
     trainer = pl.Trainer(
         num_sanity_val_steps=0,
@@ -205,14 +230,15 @@ def train(params_path, params):
         benchmark=True,
         check_val_every_n_epoch=1,
         devices=params.PARAMS["devices"],
-        callbacks=[LearningRateMonitor(logging_interval='step'),
-                   checkpoint_callback],
+        callbacks=[LearningRateMonitor(logging_interval="step"), checkpoint_callback],
         logger=tb_logger,
         log_every_n_steps=1,
         max_epochs=params.PARAMS["epochs"],
-        accumulate_grad_batches=max(1, params.PARAMS["acc_batch_size"]//params.PARAMS["batch_size"]),
+        accumulate_grad_batches=max(
+            1, params.PARAMS["acc_batch_size"] // params.PARAMS["batch_size"]
+        ),
         precision=params.PARAMS["precision"],
-        strategy="ddp" if params.PARAMS["devices"] > 1 else 'auto',
+        strategy="ddp" if params.PARAMS["devices"] > 1 else "auto",
     )
 
     with open(params_path) as f:
@@ -222,10 +248,9 @@ def train(params_path, params):
     trainer.fit(module, datamodule=data_module)
 
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Get all command line arguments.')
-    parser.add_argument('params', type=str, help='Path to parameters py file')
+    parser = argparse.ArgumentParser(description="Get all command line arguments.")
+    parser.add_argument("params", type=str, help="Path to parameters py file")
     args = parser.parse_args()
 
     spec = importlib.util.spec_from_file_location("params", args.params)
