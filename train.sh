@@ -1,4 +1,6 @@
-python train.py params/xunet_pos_weight_lr1e-6.py
+python train.py params/u2net_pos_weight_lr_500epochs.py # less epochs for images check
+
+# python train.py params/xunet_pos_weight_lr1e-6.py
 #python train.py params/xunet_pos_weight_lr.py
 #python train.py params/u2net_pos_weight_lr.py
 #python train.py params/u2net_pos_weight.py
