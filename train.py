@@ -5,6 +5,9 @@ import argparse
 import importlib
 import pandas as pd
 import os
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers.tensorboard import TensorBoardLogger
@@ -150,15 +153,29 @@ class VesuvisModule(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, batch):
-        return self._shared_step(batch, "train")
+    def training_step(self, batch, batch_idx):
+        outputs, labels, masks = self._forward_pass(batch, "train")
+        loss = self._shared_step(outputs, labels, masks, "train")
+        if batch_idx == 0:
+            self._log_image(outputs.detach().cpu()[0][0], labels.cpu()[0][0], "train")
+
+        return loss
 
     def validation_step(self, batch, batch_idx):
-        self._shared_step(batch, "val")
+        outputs, labels, masks = self._forward_pass(batch, "val")
+        self._shared_step(outputs, labels, masks, "val")
 
-    def _shared_step(self, batch, stage):
-        outputs, labels, masks = self._forward_pass(batch, stage)
+        tag = "patch"
+        if (self.current_epoch + 1) % 10 == 0:
+            tag = "whole_image"
+        else:
+            h, w = outputs.shape[-2:]
+            labels = labels[:,:, h//2:h//2+512, w//2:w//2+512]
+            outputs = outputs[:,:, h//2:h//2+512, w//2:w//2+512]
 
+        self._log_image(outputs.detach().cpu()[0][0], labels.cpu()[0][0], "val", tag)
+
+    def _shared_step(self, outputs, labels, masks, stage):
         loss = self.loss(outputs, labels, masks)
 
         self.metrics[f"{stage}_metrics"](outputs, labels)
@@ -192,6 +209,15 @@ class VesuvisModule(pl.LightningModule):
     def _log(self, loss, stage, batch_size):
         self.log(f"{stage}/loss", loss, batch_size=batch_size)
         self.log_dict(self.metrics[f"{stage}_metrics"], batch_size=batch_size)
+        
+    def _log_image(self, outputs, labels, stage, tag="patch"):
+        fig = plt.figure(figsize=(7,4) if tag=="patch" else (15,10))
+        for i, img in enumerate([labels, outputs]):
+            plt.subplot(1,2,i+1)
+            plt.imshow(img, cmap='gray')
+            plt.axis('off')
+        plt.tight_layout()
+        self.logger.experiment.add_figure(f"{stage}/{tag}", fig, self.current_epoch)
 
 
 def train(params_path, params):
